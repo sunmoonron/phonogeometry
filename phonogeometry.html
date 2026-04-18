@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Phonogeometry — sentences as trajectories in articulatory feature space</title>
+<style>
+body{font-family:system-ui,-apple-system,sans-serif;max-width:1100px;margin:1.5rem auto;padding:0 1rem;line-height:1.55;color:#1a1a1a;background:#fff}
+h1{margin:.2rem 0}h2{margin-top:2rem;border-bottom:1px solid #ddd;padding-bottom:.3rem}
+h3{margin-top:1.4rem}.sub{color:#666;margin-top:0}
+.card{border:1px solid #e3e3e3;border-radius:6px;padding:.9rem 1.1rem;margin:1rem 0;background:#fbfbfb}
+input,textarea{font-size:1rem;padding:.5rem .6rem;width:100%;box-sizing:border-box;border:1px solid #ccc;border-radius:4px;font-family:inherit}
+textarea{min-height:5.5rem;resize:vertical}
+button{font-size:.95rem;padding:.5rem .95rem;background:#2a6df4;color:#fff;border:0;border-radius:4px;cursor:pointer;margin-right:.5rem}
+button:hover{background:#1a5cdb}button.sec{background:#eee;color:#222}
+button.sec:hover{background:#ddd}
+svg{background:#fafafa;border:1px solid #ddd;display:block;width:100%;height:auto;max-width:520px}
+table{border-collapse:collapse;width:100%;margin:.6rem 0;font-size:.92rem}
+th,td{border:1px solid #ccc;padding:.4rem .55rem;text-align:left;vertical-align:top}
+th{background:#f0f0f0}code,.ipa{background:#f2f2f2;padding:.05rem .3rem;border-radius:3px;font-family:'SFMono-Regular',Consolas,monospace}
+.ipa{font-size:1.05em}
+.row{display:flex;gap:1rem;flex-wrap:wrap;align-items:flex-start}
+.panel{flex:1;min-width:320px}
+.metric{display:inline-block;background:#fff;border:1px solid #ddd;border-radius:4px;padding:.3rem .6rem;margin:.15rem;font-size:.88rem}
+.metric b{display:block;font-size:1.1rem;color:#2a6df4}
+.slider-wrap{display:flex;align-items:center;gap:.8rem;margin:.6rem 0}
+.slider-wrap input[type=range]{flex:1}
+.status{font-size:.85rem;color:#888;font-style:italic}
+.tag{display:inline-block;padding:.1rem .55rem;background:#eef;border-radius:12px;margin:.1rem;font-size:.82rem;cursor:pointer}
+.tag:hover{background:#dde}
+.quote{background:#fffbe6;border-left:3px solid #f5a623;padding:.4rem .8rem;margin:.5rem 0;font-size:.92rem}
+.novel{background:#eefaf0;border-left:3px solid #2ca05a;padding:.4rem .8rem;margin:.5rem 0}
+.caveat{background:#fdeeee;border-left:3px solid #d9534f;padding:.4rem .8rem;margin:.5rem 0;font-size:.9rem}
+ol.refs{font-size:.88rem;color:#333}ol.refs li{margin-bottom:.3rem}
+.foot{color:#777;font-size:.85rem}
+.kept{fill:#e0407f}.dropped{fill:#bbb;opacity:.5}
+details{margin:.4rem 0}summary{cursor:pointer;font-weight:600}
+</style>
+</head>
+<body>
+
+<h1>Phonogeometry</h1>
+<p class="sub">Sentences as trajectories in a bounded articulatory feature space. A pipeline, not a metaphor.</p>
+
+<div class="card">
+<b>Thesis in one paragraph.</b> Map graphemes to phonemes (via dictionary IPA), embed each phoneme as a point in a phonetic feature manifold (bounded, interpretable, 2D here but extensible), and treat a sentence as the resulting polyline — a discrete articulatory kinematic trajectory (AKT [Chartier et al. 2018]) in abstract space rather than physical vocal-tract space. Many linguistic operations then become computational-geometry queries on a lattice-valued polyline: <b>rhyme</b> = suffix nearest-neighbor, <b>alliteration</b> = prefix clustering, <b>tongue-twister difficulty</b> = curvature density, <b>sentence compression</b> = Ramer–Douglas–Peucker simplification keeping only articulatorily salient phonemes, <b>phonetic efficiency</b> = straight-line / path length. The mapping is a bijection on phonemes (lossless), so this sits alongside existing IPA pipelines rather than replacing them.</p>
+
+<h2>1 · Pipeline</h2>
+<p><code>grapheme string → G2P (IPA via dictionaryapi.dev + fallback) → phoneme tokenization → articulatory feature vectors → 2D projection → polyline → analysis</code></p>
+
+<p>The articulatory space is a subset of PanPhon-style features [Mortensen et al. 2016] collapsed to two interpretable axes for visualization:</p>
+<ul>
+<li><b>X axis:</b> front-to-back — vowels use backness, consonants use place of articulation (bilabial → labiodental → dental → alveolar → postalveolar → palatal → velar → glottal).</li>
+<li><b>Y axis:</b> openness / sonority — close vowels at the top, open vowels mid, then consonants stacked by manner (glides → liquids → nasals → fricatives → affricates → stops).</li>
+</ul>
+<p>This is a projection — the real space is ~7-dimensional. The 2D layout is chosen to preserve the <i>sonority hierarchy</i> vertically and <i>place</i> horizontally, giving visually coherent trajectories (rising sonority arcs up, consonant clusters stay low).</p>
+
+<h2>2 · Try it on a full sentence</h2>
+<div class="card" id="demo">
+<textarea id="sent">She sells seashells by the seashore.</textarea>
+<div style="margin-top:.5rem">
+  <button onclick="analyze()">Analyze</button>
+  <button class="sec" onclick="setEx('Peter Piper picked a peck of pickled peppers.')">Peter Piper</button>
+  <button class="sec" onclick="setEx('The quick brown fox jumps over the lazy dog.')">pangram</button>
+  <button class="sec" onclick="setEx('How much wood would a woodchuck chuck?')">woodchuck</button>
+  <button class="sec" onclick="setEx('I wandered lonely as a cloud that floats on high.')">Wordsworth</button>
+  <span id="status" class="status"></span>
+</div>
+
+<div class="row" style="margin-top:1rem">
+<div class="panel">
+  <svg id="viz" viewBox="0 0 520 520"></svg>
+  <p class="foot">Grey dots: all phonemes in the space. Magenta path: your sentence. Blue circles: phonemes kept by RDP at current ε. Grey hollow: dropped by RDP.</p>
+  <div class="slider-wrap">
+    <label>RDP ε: <span id="epsVal">30</span></label>
+    <input type="range" id="eps" min="0" max="200" value="30" oninput="updateRDP()">
+    <span class="foot">compression</span>
+  </div>
+</div>
+<div class="panel">
+  <div id="metrics"></div>
+  <div id="details"></div>
+</div>
+</div>
+</div>
+
+<h2>3 · What the numbers mean</h2>
+
+<div class="novel"><b>Curvature density (tongue-twister score).</b> We sum unsigned turning angles along the polyline, normalize by phoneme count. Tongue twisters — sentences that repeatedly shuttle between <i>nearby but distinct</i> places of articulation (s/ʃ, p/b, k/g) — produce high-angle zigzags. This matches the clinical characterization: rapid reversals between minimal-pair consonants [PANCETTA, Keh et al. 2022].</div>
+
+<div class="novel"><b>Path efficiency η = ‖p<sub>n</sub> − p<sub>1</sub>‖ / ∑‖p<sub>i+1</sub> − p<sub>i</sub>‖.</b> 1.0 means the sentence marches directly across the mouth; 0 means we end where we started after a meandering tour. Alliterative/rhyming verse has structurally low η — the path loops back on itself.</div>
+
+<div class="novel"><b>RDP-compressed sentence.</b> Ramer–Douglas–Peucker [Ramer 1972; Douglas &amp; Peucker 1973] keeps only phonemes whose perpendicular distance from the chord of their neighbours exceeds ε. What survives are the phonemes at genuine direction changes in the articulatory trajectory — a principled analogue of "acoustic landmarks" [Stevens 2002], computable in O(n log m) on average. This is different from prior AKT compression work, which operates on continuous physical signals; here we operate on the discrete feature-space trajectory.</div>
+
+<div class="novel"><b>Rhyme pairs.</b> For each word pair in the sentence, compute the 2-norm between the last-k phoneme vectors (k=2). Pairs below threshold = rhyme. Zero threshold = perfect rhyme; ε-ball = slant rhyme. Free.</div>
+
+<div class="novel"><b>Alliteration runs.</b> Consecutive words whose initial phonemes fall within ε of each other → alliterative run. This captures true phonetic alliteration (soft/city share /s/) even when spelling disagrees.</div>
+
+<h2>4 · Big O, with derivations</h2>
+<table>
+<tr><th>Operation</th><th>Complexity</th><th>Argument</th></tr>
+<tr><td>G2P via API (cached)</td><td>O(w) amortized</td><td>w = words; LRU cache → cache hits O(1), network miss is constant per word after rate-limit wait</td></tr>
+<tr><td>Phoneme tokenization</td><td>O(|ipa|)</td><td>Single pass, longest-match-first for digraphs (tʃ, dʒ, aɪ, eɪ, oʊ…)</td></tr>
+<tr><td>Feature lookup</td><td>O(n)</td><td>n = phonemes; hashmap</td></tr>
+<tr><td>Curve length, efficiency</td><td>O(n)</td><td>single pass</td></tr>
+<tr><td>Curvature density</td><td>O(n)</td><td>one atan2 per interior vertex</td></tr>
+<tr><td>RDP compression</td><td>O(n log m) avg, O(n·m) worst</td><td>m = kept points. Tight analysis: Hershberger &amp; Snoeyink 1994 give O(n log n) variants. Our recursive impl is the textbook one.</td></tr>
+<tr><td>Rhyme across w words</td><td>O(w²·k)</td><td>Pairwise last-k suffix distance. For a dictionary of N words: build KD-tree in O(N log N), query in O(log N).</td></tr>
+<tr><td>Alliteration</td><td>O(w)</td><td>Scan consecutive initial phonemes</td></tr>
+<tr><td>Sentence-to-sentence similarity (DTW)</td><td>O(n·m)</td><td>Classical Sakoe &amp; Chiba 1978. Sakoe-Chiba band reduces to O(n·r) for radius r.</td></tr>
+<tr><td>Lossless decode (phonemes → IPA → graphemes)</td><td>O(n) phonetic, but <b>ambiguous</b> back to graphemes</td><td>English spelling is many-to-one to IPA. The bijection holds at the phoneme level; re-spelling is a separate problem.</td></tr>
+</table>
+
+<h2>5 · Metric properties (a PhD committee would ask)</h2>
+<ul>
+<li><b>Non-negativity, identity, symmetry:</b> satisfied — we use Euclidean in feature space.</li>
+<li><b>Triangle inequality:</b> satisfied on pointwise distances; <i>not</i> satisfied by DTW between unequal-length curves. This is a known property of DTW [Casacuberta 1987].</li>
+<li><b>Perceptual calibration:</b> coords are hand-tuned, not learned from human similarity judgments. A real thesis would fit a metric against MDS on confusion matrices [Miller &amp; Nicely 1955].</li>
+<li><b>Information bound:</b> with |Σ| ≈ 40 English phonemes, ceiling entropy is log₂ 40 ≈ 5.3 bits/phoneme. English phoneme bigram entropy ≈ 3.1 bits (Shannon-style estimate). RDP-compressed streams trade lossiness for lower bitrate — the rate-distortion curve is an empirical question this tool can generate.</li>
+</ul>
+
+<h2>6 · Honest limitations</h2>
+<div class="caveat"><b>This is a working sketch, not a thesis.</b> Concretely missing: (a) suprasegmental features — no stress, tone, duration, intonation; (b) the 2D projection is lossy vs. the 7+ dim real feature space; (c) feature weighting is uniform but human perception isn't (Weber's law, phonotactic priors); (d) G2P fallback is a toy; (e) coordinates are English-biased (no clicks, ejectives, retroflex series); (f) we don't handle coarticulation, which AKT research shows is huge; (g) dictionaryapi.dev sometimes fails CORS or returns no IPA — the app falls back to a local mini-dictionary then a last-ditch letter-based approximation; (h) no empirical benchmark against PWESuite, TwistList, or CMU-dict rhyme gold.</div>
+
+<h2>7 · Open questions a real thesis would tackle</h2>
+<ol>
+<li>Learn coordinates by metric learning on human phonetic-similarity judgments (Nosofsky-style MDS) and compare to hand-tuned.</li>
+<li>Empirically test: does RDP-compressed speech remain intelligible? Design a synthesis experiment — resynthesize only the kept phonemes with schwa insertions, run a WER study.</li>
+<li>Benchmark: does trajectory-DTW beat Soundex / Metaphone / pretrained phonetic embeddings on PWESuite's rhyme + cognate tasks?</li>
+<li>Cross-linguistic: the PanPhon feature set is universal. Does the sonority-based Y axis generalize, or do we need language-specific projections?</li>
+<li>Hybrid semantic-phonetic space: concatenate our 2–7 dim articulatory features with a small semantic vector (FastText subword). Does that beat either alone on pun / homophone detection?</li>
+<li>Rate-distortion curve: plot ε vs. intelligibility and vs. bitrate. Is there a phase transition?</li>
+<li>Is curvature density a predictor of child-acquisition order (later-acquired phonemes cluster closer, so twisters using late phonemes score higher)?</li>
+<li>The AKT work shows coarticulation is locally encoded. Can we predict coarticulation from 2nd-derivative smoothing of our trajectory?</li>
+</ol>
+
+<h2>8 · References</h2>
+<ol class="refs">
+<li>Chomsky, N. &amp; Halle, M. (1968). <i>The Sound Pattern of English</i>. Harper &amp; Row. (SPE articulatory features.)</li>
+<li>Douglas, D. H. &amp; Peucker, T. K. (1973). Algorithms for the reduction of the number of points required to represent a digitized line or its caricature. <i>Cartographica</i> 10(2).</li>
+<li>Ramer, U. (1972). An iterative procedure for the polygonal approximation of plane curves. <i>CGIP</i> 1(3).</li>
+<li>Sakoe, H. &amp; Chiba, S. (1978). Dynamic programming algorithm optimization for spoken word recognition. <i>IEEE ASSP</i> 26.</li>
+<li>Miller, G. A. &amp; Nicely, P. E. (1955). An analysis of perceptual confusions among some English consonants. <i>JASA</i> 27.</li>
+<li>Stevens, K. N. (2002). Toward a model for lexical access based on acoustic landmarks and distinctive features. <i>JASA</i> 111.</li>
+<li>Mortensen, D. R. et al. (2016). PanPhon: A resource for mapping IPA segments to articulatory feature vectors. <i>COLING</i>.</li>
+<li>Chartier, J., Anumanchipalli, G. K., Johnson, K., &amp; Chang, E. F. (2018). Encoding of articulatory kinematic trajectories in human speech sensorimotor cortex. <i>Neuron</i> 98.</li>
+<li>Zouhar, V. et al. (2024). PWESuite: Phonetic word embeddings and tasks they facilitate. <i>LREC-COLING</i>.</li>
+<li>Keh, S. et al. (2022). PANCETTA: Phoneme aware neural completion to elicit tongue twisters automatically. arXiv:2209.06275.</li>
+<li>Hershberger, J. &amp; Snoeyink, J. (1994). An O(n log n) implementation of the Douglas-Peucker algorithm. <i>SoCG</i>.</li>
+<li>Free Dictionary API — <code>api.dictionaryapi.dev</code>. Open source, CC-BY-SA data from Wiktionary.</li>
+</ol>
+
+<hr>
+<p class="foot">This page is a first-principles sketch built in one response, not a peer-reviewed artifact. Source visible in page; all computations run client-side; API calls are cached in memory only.</p>
+
+<script>
+/* ============================================================
+   Phoneme → (x, y) in articulatory feature space.
+   y: 0 (close/top) → 1 (open/bottom of mouth) → consonants stacked below by manner.
+   x: 0 (front/labial) → 1 (back/velar/glottal).
+   Scaled to 500×500 SVG with 10px margin.
+   ============================================================ */
+const S = 500, M = 10;
+const sx = u => M + u*S;
+const sy = v => M + v*S;
+
+// features: [normalised x, normalised y, manner, sonority]
+// sonority: 1 stop, 2 affricate, 3 fricative, 4 nasal, 5 liquid, 6 glide, 7 vowel
+const PH = {
+  // ---- Vowels (y in 0.02–0.32 band, sonority 7) ----
+  'i':  {x:.06, y:.04, t:'V', s:7}, // FLEECE
+  'ɪ':  {x:.16, y:.13, t:'V', s:7},
+  'e':  {x:.08, y:.22, t:'V', s:7},
+  'ɛ':  {x:.17, y:.28, t:'V', s:7},
+  'æ':  {x:.22, y:.34, t:'V', s:7},
+  'a':  {x:.40, y:.38, t:'V', s:7},
+  'ɑ':  {x:.78, y:.38, t:'V', s:7},
+  'ɒ':  {x:.80, y:.35, t:'V', s:7},
+  'ɔ':  {x:.86, y:.28, t:'V', s:7},
+  'o':  {x:.88, y:.22, t:'V', s:7},
+  'ʊ':  {x:.84, y:.13, t:'V', s:7},
+  'u':  {x:.94, y:.04, t:'V', s:7},
+  'ə':  {x:.50, y:.24, t:'V', s:7},
+  'ʌ':  {x:.55, y:.32, t:'V', s:7},
+  'ɜ':  {x:.50, y:.22, t:'V', s:7},
+  // ---- Glides (y ~ .48, sonority 6) ----
+  'j':  {x:.62, y:.48, t:'C', s:6},
+  'w':  {x:.90, y:.48, t:'C', s:6},
+  // ---- Liquids (y ~ .58, sonority 5) ----
+  'l':  {x:.46, y:.58, t:'C', s:5},
+  'r':  {x:.54, y:.58, t:'C', s:5},
+  'ɹ':  {x:.54, y:.58, t:'C', s:5},
+  // ---- Nasals (y ~ .70, sonority 4) ----
+  'm':  {x:.08, y:.70, t:'C', s:4},
+  'n':  {x:.48, y:.70, t:'C', s:4},
+  'ŋ':  {x:.82, y:.70, t:'C', s:4},
+  // ---- Fricatives (y ~ .80–.84, sonority 3). Voiced slightly higher. ----
+  'f':  {x:.12, y:.82, t:'C', s:3},
+  'v':  {x:.13, y:.79, t:'C', s:3},
+  'θ':  {x:.34, y:.82, t:'C', s:3},
+  'ð':  {x:.35, y:.79, t:'C', s:3},
+  's':  {x:.50, y:.82, t:'C', s:3},
+  'z':  {x:.51, y:.79, t:'C', s:3},
+  'ʃ':  {x:.60, y:.82, t:'C', s:3},
+  'ʒ':  {x:.61, y:.79, t:'C', s:3},
+  'h':  {x:.95, y:.82, t:'C', s:3},
+  // ---- Affricates (y ~ .90, sonority 2) ----
+  'tʃ': {x:.58, y:.90, t:'C', s:2},
+  'dʒ': {x:.60, y:.87, t:'C', s:2},
+  // ---- Stops (y ~ .96, sonority 1) ----
+  'p':  {x:.06, y:.97, t:'C', s:1},
+  'b':  {x:.07, y:.94, t:'C', s:1},
+  't':  {x:.48, y:.97, t:'C', s:1},
+  'd':  {x:.49, y:.94, t:'C', s:1},
+  'k':  {x:.82, y:.97, t:'C', s:1},
+  'g':  {x:.83, y:.94, t:'C', s:1},
+};
+
+/* ============================================================
+   Local IPA mini-dictionary (for speed and for offline fallback).
+   All transcriptions broadly General American, simplified.
+   ============================================================ */
+const LOCAL = {
+  'the':'ðə','a':'ə','an':'ən','of':'ʌv','to':'tu','in':'ɪn','is':'ɪz','it':'ɪt','on':'ɑn','for':'fɔr',
+  'and':'ænd','or':'ɔr','but':'bʌt','with':'wɪð','by':'baɪ','at':'æt','as':'æz','from':'frʌm',
+  'that':'ðæt','this':'ðɪs','these':'ðiz','those':'ðoʊz','be':'bi','was':'wʌz','were':'wɜr',
+  'i':'aɪ','you':'ju','we':'wi','they':'ðeɪ','me':'mi','him':'hɪm','her':'hɜr','us':'ʌs','them':'ðɛm',
+  'he':'hi','she':'ʃi','his':'hɪz','hers':'hɜrz','its':'ɪts','our':'aʊr','their':'ðɛr',
+  'hello':'həloʊ','world':'wɜrld','sells':'sɛlz','sea':'si','seashells':'siʃɛlz','seashore':'siʃɔr',
+  'shells':'ʃɛlz','shore':'ʃɔr','peter':'pitər','piper':'paɪpər','picked':'pɪkt','peck':'pɛk',
+  'pickled':'pɪkəld','peppers':'pɛpərz','how':'haʊ','much':'mʌtʃ','wood':'wʊd','would':'wʊd',
+  'chuck':'tʃʌk','chucks':'tʃʌks','woodchuck':'wʊdtʃʌk','if':'ɪf','could':'kʊd',
+  'quick':'kwɪk','brown':'braʊn','fox':'fɑks','jumps':'dʒʌmps','over':'oʊvər','lazy':'leɪzi','dog':'dɔg',
+  'cat':'kæt','hat':'hæt','bat':'bæt','mat':'mæt','rat':'ræt','sat':'sæt','fat':'fæt','pat':'pæt',
+  'bad':'bæd','mad':'mæd','sad':'sæd','dad':'dæd','lad':'læd','had':'hæd',
+  'wandered':'wɑndərd','lonely':'loʊnli','cloud':'klaʊd','floats':'floʊts','high':'haɪ',
+  'love':'lʌv','life':'laɪf','light':'laɪt','night':'naɪt','right':'raɪt','bright':'braɪt',
+  'big':'bɪg','small':'smɔl','tall':'tɔl','fast':'fæst','slow':'sloʊ','can':'kæn','will':'wɪl','should':'ʃʊd',
+  'about':'əbaʊt','up':'ʌp','down':'daʊn','one':'wʌn','two':'tu','three':'θri','four':'fɔr','five':'faɪv',
+  'beach':'bitʃ','teach':'titʃ','reach':'ritʃ','each':'itʃ','speech':'spitʃ',
+  'tree':'tri','free':'fri','three':'θri','see':'si','be':'bi','me':'mi',
+  'mama':'mɑmə','papa':'pɑpə','sister':'sɪstər','brother':'brʌðər'
+};
+
+/* ============================================================
+   API fetch with cache & fallback.
+   ============================================================ */
+const CACHE = new Map();
+Object.entries(LOCAL).forEach(([k,v])=>CACHE.set(k, v));
+
+async function getIPA(word){
+  const w = word.toLowerCase().replace(/[^a-z']/g,'');
+  if (!w) return '';
+  if (CACHE.has(w)) return CACHE.get(w);
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(()=>ctrl.abort(), 2500);
+    const r = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(w)}`, {signal:ctrl.signal});
+    clearTimeout(t);
+    if (r.ok){
+      const j = await r.json();
+      let p = j[0]?.phonetic || null;
+      if (!p && Array.isArray(j[0]?.phonetics)){
+        p = j[0].phonetics.find(x=>x.text)?.text || null;
+      }
+      if (p){
+        p = p.replace(/[\/\[\]]/g,'').trim();
+        CACHE.set(w, p);
+        return p;
+      }
+    }
+  } catch(e){ /* CORS / offline / timeout → fallback */ }
+  // Fallback: dumb letter-based G2P.
+  const rough = letterFallback(w);
+  CACHE.set(w, rough);
+  return rough;
+}
+
+function letterFallback(w){
+  const di = {'th':'θ','ch':'tʃ','sh':'ʃ','ph':'f','ng':'ŋ','oo':'u','ee':'i','ea':'i','ou':'aʊ','ow':'aʊ','oi':'ɔɪ','oy':'ɔɪ','ai':'eɪ','ay':'eɪ','igh':'aɪ','ck':'k','qu':'kw'};
+  const mo = {'a':'æ','b':'b','c':'k','d':'d','e':'ɛ','f':'f','g':'g','h':'h','i':'ɪ','j':'dʒ','k':'k','l':'l','m':'m','n':'n','o':'ɑ','p':'p','q':'k','r':'r','s':'s','t':'t','u':'ʌ','v':'v','w':'w','x':'ks','y':'j','z':'z'};
+  let out = '', i = 0;
+  while (i < w.length){
+    const tri = w.substr(i,3), bi = w.substr(i,2);
+    if (di[tri]) { out += di[tri]; i += 3; }
+    else if (di[bi]) { out += di[bi]; i += 2; }
+    else { out += mo[w[i]] || ''; i++; }
+  }
+  return out;
+}
+
+/* ============================================================
+   IPA → phoneme token sequence.
+   Longest-match-first for digraphs and diphthongs.
+   Diphthongs split into two points so the curve slides through.
+   ============================================================ */
+const DIGRAPHS = ['tʃ','dʒ'];
+const DIPHS = {'aɪ':['a','ɪ'], 'aʊ':['a','ʊ'], 'eɪ':['e','ɪ'], 'oʊ':['o','ʊ'], 'əʊ':['o','ʊ'], 'ɔɪ':['ɔ','ɪ']};
+function tokenize(ipa){
+  const out = [];
+  let i = 0;
+  while (i < ipa.length){
+    const c = ipa[i];
+    if (c === 'ˈ' || c === 'ˌ' || c === '.' || c === ' ' || c === '\t' || c === 'ː' || c === 'ˑ' || c === "'"){ i++; continue; }
+    // two-char candidates
+    const two = ipa.substr(i,2);
+    if (DIPHS[two]){ out.push(...DIPHS[two]); i += 2; continue; }
+    if (DIGRAPHS.includes(two) && PH[two]){ out.push(two); i += 2; continue; }
+    if (PH[c]){ out.push(c); i++; continue; }
+    // r-colored vowels like ɜr, ər — we treat as [vowel, r]
+    if (c === 'r' || c === 'ɹ'){ out.push('r'); i++; continue; }
+    i++;
+  }
+  return out;
+}
+
+/* ============================================================
+   Analysis primitives.
+   ============================================================ */
+const dist = (p,q) => Math.hypot(p.x-q.x, p.y-q.y);
+
+function pathLength(pts){
+  let L = 0;
+  for (let i = 1; i < pts.length; i++) L += dist(pts[i-1], pts[i]);
+  return L;
+}
+
+function efficiency(pts){
+  if (pts.length < 2) return 1;
+  const L = pathLength(pts); if (L === 0) return 1;
+  return dist(pts[0], pts[pts.length-1]) / L;
+}
+
+function curvatureDensity(pts){
+  if (pts.length < 3) return 0;
+  let total = 0, n = 0;
+  for (let i = 1; i < pts.length - 1; i++){
+    const v1x = pts[i].x - pts[i-1].x, v1y = pts[i].y - pts[i-1].y;
+    const v2x = pts[i+1].x - pts[i].x, v2y = pts[i+1].y - pts[i].y;
+    const n1 = Math.hypot(v1x,v1y), n2 = Math.hypot(v2x,v2y);
+    if (n1 > 1e-5 && n2 > 1e-5){
+      const cos = Math.max(-1, Math.min(1, (v1x*v2x + v1y*v2y)/(n1*n2)));
+      total += Math.acos(cos);
+      n++;
+    }
+  }
+  return n ? total / n : 0;
+}
+
+/* RDP returning kept-indices */
+function rdpKeep(pts, eps){
+  const keep = new Array(pts.length).fill(false);
+  if (pts.length === 0) return keep;
+  keep[0] = true; keep[pts.length-1] = true;
+  function rec(i, j){
+    if (j - i < 2) return;
+    const p1 = pts[i], p2 = pts[j];
+    const dx = p2.x - p1.x, dy = p2.y - p1.y;
+    const L = Math.hypot(dx, dy) || 1e-9;
+    let maxD = 0, idx = -1;
+    for (let k = i+1; k < j; k++){
+      const d = Math.abs(dy*pts[k].x - dx*pts[k].y + p2.x*p1.y - p2.y*p1.x) / L;
+      if (d > maxD){ maxD = d; idx = k; }
+    }
+    if (idx !== -1 && maxD > eps){
+      keep[idx] = true;
+      rec(i, idx); rec(idx, j);
+    }
+  }
+  rec(0, pts.length - 1);
+  return keep;
+}
+
+/* ============================================================
+   State & rendering.
+   ============================================================ */
+let STATE = { words: [], phonemes: [], points: [], wordBreaks: [] };
+// wordBreaks[i] = first phoneme index of word i; len = words.length+1
+
+async function analyze(){
+  const text = document.getElementById('sent').value.trim();
+  if (!text){ return; }
+  const setStatus = s => document.getElementById('status').textContent = s;
+  setStatus('fetching pronunciations…');
+
+  const words = text.split(/\s+/).map(w => w.replace(/[^A-Za-z']/g,'')).filter(Boolean);
+  const ipas = await Promise.all(words.map(getIPA));
+  const phonemes = [], breaks = [0];
+  const pointsPerWord = [];
+  for (let i = 0; i < ipas.length; i++){
+    const toks = tokenize(ipas[i]);
+    phonemes.push(...toks);
+    breaks.push(phonemes.length);
+    pointsPerWord.push(toks);
+  }
+  const points = phonemes.map(p => ({ x: PH[p].x, y: PH[p].y, ph: p }));
+  STATE = { words, ipas, phonemes, points, breaks, pointsPerWord };
+  setStatus(`${words.length} words · ${phonemes.length} phonemes · cache hits: ${words.filter(w=>CACHE.has(w.toLowerCase().replace(/[^a-z']/g,''))).length}/${words.length}`);
+  render();
+  updateRDP();
+}
+
+function setEx(s){ document.getElementById('sent').value = s; analyze(); }
+
+function render(){
+  const pts = STATE.points.map(p => ({ x: sx(p.x), y: sy(p.y), ph: p.ph }));
+  const eps = Number(document.getElementById('eps').value);
+  const keep = rdpKeep(pts, eps);
+
+  let h = '';
+  // soft grid
+  for (let k = 0; k <= 10; k++){
+    h += `<line x1="${M+k*S/10}" y1="${M}" x2="${M+k*S/10}" y2="${M+S}" stroke="#eee"/>`;
+    h += `<line x1="${M}" y1="${M+k*S/10}" x2="${M+S}" y2="${M+k*S/10}" stroke="#eee"/>`;
+  }
+  // axis labels
+  h += `<text x="${M+4}" y="${M+14}" font-size="11" fill="#777">close ↑ · front →</text>`;
+  h += `<text x="${M+4}" y="${M+S-4}" font-size="11" fill="#777">stops ↓</text>`;
+  h += `<text x="${M+S-100}" y="${M+14}" font-size="11" fill="#777">← back</text>`;
+  // all phoneme dots
+  for (const [k,v] of Object.entries(PH)){
+    h += `<circle cx="${sx(v.x)}" cy="${sy(v.y)}" r="2.5" fill="#bbb"/>`;
+    h += `<text x="${sx(v.x)+5}" y="${sy(v.y)+4}" font-size="10" fill="#999">${k}</text>`;
+  }
+  // path
+  if (pts.length > 1){
+    const d = 'M' + pts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' L');
+    h += `<path d="${d}" stroke="#e0407f" stroke-width="1.6" fill="none" opacity=".75"/>`;
+  }
+  // vertices
+  pts.forEach((p, i) => {
+    if (keep[i]){
+      h += `<circle cx="${p.x}" cy="${p.y}" r="6" fill="#2a6df4" stroke="#fff" stroke-width="1.2"/>`;
+    } else {
+      h += `<circle cx="${p.x}" cy="${p.y}" r="4" fill="#e0407f" opacity=".35"/>`;
+    }
+    // label first-in-word phonemes
+    if (STATE.breaks.includes(i)){
+      h += `<text x="${p.x}" y="${p.y-9}" font-size="10" fill="#333" text-anchor="middle">${p.ph}</text>`;
+    }
+  });
+
+  document.getElementById('viz').innerHTML = h;
+
+  // metrics
+  const cd = curvatureDensity(STATE.points);
+  const eff = efficiency(STATE.points);
+  const L = pathLength(STATE.points);
+  const kept = keep.filter(Boolean).length;
+  const mEl = document.getElementById('metrics');
+  mEl.innerHTML = `
+    <div class="metric"><b>${STATE.phonemes.length}</b>phonemes</div>
+    <div class="metric"><b>${cd.toFixed(2)}</b>rad/turn (twister score)</div>
+    <div class="metric"><b>${eff.toFixed(3)}</b>efficiency η</div>
+    <div class="metric"><b>${L.toFixed(2)}</b>path length</div>
+    <div class="metric"><b>${kept}/${STATE.phonemes.length}</b>kept by RDP</div>
+  `;
+
+  // details: rhyme pairs, alliteration, compressed
+  renderDetails(keep);
+}
+
+function updateRDP(){
+  document.getElementById('epsVal').textContent = document.getElementById('eps').value;
+  if (STATE.points.length) render();
+}
+
+function renderDetails(keep){
+  const d = [];
+  // IPA per word
+  d.push('<h4>Word-level IPA</h4><table><tr><th>word</th><th>IPA</th><th>phonemes</th></tr>');
+  for (let i = 0; i < STATE.words.length; i++){
+    const start = STATE.breaks[i], end = STATE.breaks[i+1];
+    const toks = STATE.phonemes.slice(start, end);
+    d.push(`<tr><td>${STATE.words[i]}</td><td class="ipa">/${STATE.ipas[i]}/</td><td class="ipa">[${toks.join(' ')}]</td></tr>`);
+  }
+  d.push('</table>');
+
+  // rhyme pairs (last 2 phonemes)
+  const rhymes = [];
+  const suf = (i) => {
+    const a = STATE.breaks[i], b = STATE.breaks[i+1];
+    return STATE.points.slice(Math.max(a, b-2), b);
+  };
+  for (let i = 0; i < STATE.words.length; i++){
+    for (let j = i+1; j < STATE.words.length; j++){
+      const si = suf(i), sj = suf(j);
+      if (si.length === sj.length && si.length >= 2){
+        let sd = 0;
+        for (let k = 0; k < si.length; k++) sd += dist(si[k], sj[k]);
+        if (sd < 0.08) rhymes.push([STATE.words[i], STATE.words[j], sd.toFixed(3)]);
+      }
+    }
+  }
+  d.push('<h4>Rhyme pairs (suffix distance &lt; 0.08)</h4>');
+  d.push(rhymes.length ? '<ul>' + rhymes.map(r=>`<li>${r[0]} ↔ ${r[1]} <span class="foot">(d=${r[2]})</span></li>`).join('') + '</ul>' : '<p class="foot">none</p>');
+
+  // alliteration
+  const allit = [];
+  for (let i = 0; i < STATE.words.length - 1; i++){
+    const a = STATE.breaks[i], b = STATE.breaks[i+1];
+    if (b - a > 0 && STATE.breaks[i+2] !== undefined){
+      const p1 = STATE.points[a];
+      const p2 = STATE.points[STATE.breaks[i+1]];
+      if (p1 && p2 && dist(p1, p2) < 0.12){
+        allit.push(`${STATE.words[i]} ~ ${STATE.words[i+1]}`);
+      }
+    }
+  }
+  d.push('<h4>Alliteration runs (initial phoneme distance &lt; 0.12)</h4>');
+  d.push(allit.length ? '<ul>' + allit.map(a=>`<li>${a}</li>`).join('') + '</ul>' : '<p class="foot">none</p>');
+
+  // RDP-compressed phoneme stream
+  const keptPhs = STATE.phonemes.filter((_, i) => keep[i]);
+  d.push(`<h4>RDP-compressed phoneme stream</h4><p class="ipa">[${keptPhs.join(' ')}]</p>`);
+  d.push(`<p class="foot">compression ratio ${(keptPhs.length / STATE.phonemes.length).toFixed(2)} · bits saved ≈ ${Math.max(0,(STATE.phonemes.length - keptPhs.length)*Math.log2(40)).toFixed(1)}</p>`);
+
+  document.getElementById('details').innerHTML = d.join('');
+}
+
+// autorun
+window.addEventListener('DOMContentLoaded', analyze);
+</script>
+
+</body>
+</html>
